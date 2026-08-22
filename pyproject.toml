@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tcmb-policy-rag-pipeline"
+version = "0.1.0"
+description = "Incremental, versioned TCMB PPK ingestion and citation-backed retrieval"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Umut Sever"}]
+keywords = ["data-engineering", "rag", "tcmb", "sqlite", "information-retrieval"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+]
+
+[project.scripts]
+tcmb-policy = "tcmb_policy_rag.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
