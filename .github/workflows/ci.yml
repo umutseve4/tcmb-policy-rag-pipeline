@@ -74,7 +74,8 @@ jobs:
           candidate = f'{secret_name}="{synthetic_value}"'
           assert is_candidate(candidate)
           assert not is_candidate(f'{secret_name}="your_api_key"')
-          assert not is_candidate(f'{secret_name}="${{API_KEY}}"')
+          environment_reference = "$" + "{API_KEY}"
+          assert not is_candidate(f'{secret_name}="{environment_reference}"')
           redacted_report = "fixture.txt:1"
           assert synthetic_value not in redacted_report
 
