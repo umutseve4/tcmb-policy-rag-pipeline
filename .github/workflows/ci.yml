@@ -34,7 +34,36 @@ jobs:
       - name: Secret pattern gate
         shell: bash
         run: |
-          if git grep -nEI '(api[_-]?key|secret|token|password)[[:space:]]*=[[:space:]]*["'"'][^"'"']{8,}' -- ':!*.md'; then
-            echo 'Potential hard-coded secret detected.' >&2
-            exit 1
-          fi
+          python - <<'PY'
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          pattern = re.compile(
+              r"(api[_-]?key|secret|token|password)\s*=\s*[\"'][^\"']{8,}",
+              re.IGNORECASE,
+          )
+          findings = []
+          tracked = subprocess.check_output(
+              ["git", "ls-files", "-z"], text=False
+          ).split(b"\0")
+          for raw_path in tracked:
+              if not raw_path:
+                  continue
+              path = pathlib.Path(raw_path.decode("utf-8", errors="surrogateescape"))
+              if path.suffix.lower() == ".md":
+                  continue
+              data = path.read_bytes()
+              if b"\0" in data:
+                  continue
+              for line_number, line in enumerate(
+                  data.decode("utf-8", errors="replace").splitlines(), start=1
+              ):
+                  if pattern.search(line):
+                      findings.append(f"{path}:{line_number}")
+          if findings:
+              print("Potential hard-coded secret detected:", file=sys.stderr)
+              print("\n".join(findings), file=sys.stderr)
+              raise SystemExit(1)
+          PY
