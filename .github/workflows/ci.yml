@@ -41,9 +41,43 @@ jobs:
           import sys
 
           pattern = re.compile(
-              r"(api[_-]?key|secret|token|password)\s*=\s*[\"'][^\"']{8,}",
+              r"(?P<name>api[_-]?key|secret|token|password)\s*=\s*"
+              r"(?P<quote>[\"'])(?P<value>[^\"'\r\n]{8,})(?P=quote)",
               re.IGNORECASE,
           )
+          placeholder_values = {
+              "changeme",
+              "examplevalue",
+              "placeholder",
+              "replace_me",
+              "your_api_key",
+              "your_secret",
+              "your_token",
+              "your_password",
+          }
+
+          def is_candidate(line):
+              match = pattern.search(line)
+              if match is None:
+                  return False
+              value = match.group("value").strip()
+              lowered = value.lower()
+              if lowered in placeholder_values:
+                  return False
+              if value.startswith(("${", "{{", "<")):
+                  return False
+              return True
+
+          # Exercise positive, negative, and redacted-report behavior on every run.
+          secret_name = "api_" + "key"
+          synthetic_value = "SYNTHETIC_" + "A" * 16
+          candidate = f'{secret_name}="{synthetic_value}"'
+          assert is_candidate(candidate)
+          assert not is_candidate(f'{secret_name}="your_api_key"')
+          assert not is_candidate(f'{secret_name}="${{API_KEY}}"')
+          redacted_report = "fixture.txt:1"
+          assert synthetic_value not in redacted_report
+
           findings = []
           tracked = subprocess.check_output(
               ["git", "ls-files", "-z"], text=False
@@ -52,15 +86,13 @@ jobs:
               if not raw_path:
                   continue
               path = pathlib.Path(raw_path.decode("utf-8", errors="surrogateescape"))
-              if path.suffix.lower() == ".md":
-                  continue
               data = path.read_bytes()
               if b"\0" in data:
                   continue
               for line_number, line in enumerate(
                   data.decode("utf-8", errors="replace").splitlines(), start=1
               ):
-                  if pattern.search(line):
+                  if is_candidate(line):
                       findings.append(f"{path}:{line_number}")
           if findings:
               print("Potential hard-coded secret detected:", file=sys.stderr)
