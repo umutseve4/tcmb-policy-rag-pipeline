@@ -8,16 +8,21 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: tcmb-policy-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package
@@ -29,7 +34,69 @@ jobs:
       - name: Secret pattern gate
         shell: bash
         run: |
-          if git grep -nEI '(api[_-]?key|secret|token|password)[[:space:]]*=[[:space:]]*["'"''][^"'"'']{8,}' -- ':!*.md'; then
-            echo 'Potential hard-coded secret detected.' >&2
-            exit 1
-          fi
+          python - <<'PY'
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          pattern = re.compile(
+              r"(?P<name>api[_-]?key|secret|token|password)\s*=\s*"
+              r"(?P<quote>[\"'])(?P<value>[^\"'\r\n]{8,})(?P=quote)",
+              re.IGNORECASE,
+          )
+          placeholder_values = {
+              "changeme",
+              "examplevalue",
+              "placeholder",
+              "replace_me",
+              "your_api_key",
+              "your_secret",
+              "your_token",
+              "your_password",
+          }
+
+          def is_candidate(line):
+              match = pattern.search(line)
+              if match is None:
+                  return False
+              value = match.group("value").strip()
+              lowered = value.lower()
+              if lowered in placeholder_values:
+                  return False
+              if value.startswith(("${", "{{", "<")):
+                  return False
+              return True
+
+          # Exercise positive, negative, and redacted-report behavior on every run.
+          secret_name = "api_" + "key"
+          synthetic_value = "SYNTHETIC_" + "A" * 16
+          candidate = f'{secret_name}="{synthetic_value}"'
+          assert is_candidate(candidate)
+          assert not is_candidate(f'{secret_name}="your_api_key"')
+          environment_reference = "$" + "{API_KEY}"
+          assert not is_candidate(f'{secret_name}="{environment_reference}"')
+          redacted_report = "fixture.txt:1"
+          assert synthetic_value not in redacted_report
+
+          findings = []
+          tracked = subprocess.check_output(
+              ["git", "ls-files", "-z"], text=False
+          ).split(b"\0")
+          for raw_path in tracked:
+              if not raw_path:
+                  continue
+              path = pathlib.Path(raw_path.decode("utf-8", errors="surrogateescape"))
+              data = path.read_bytes()
+              if b"\0" in data:
+                  continue
+              for line_number, line in enumerate(
+                  data.decode("utf-8", errors="replace").splitlines(), start=1
+              ):
+                  if is_candidate(line):
+                      findings.append(f"{path}:{line_number}")
+          if findings:
+              print("Potential hard-coded secret detected:", file=sys.stderr)
+              print("\n".join(findings), file=sys.stderr)
+              raise SystemExit(1)
+          PY
